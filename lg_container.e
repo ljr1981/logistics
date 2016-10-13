@@ -7,19 +7,70 @@ class
 	LG_CONTAINER
 
 create
-	make
+	make,
+	make_with_id
 
 feature {NONE} -- Initialization
 
+	make_with_id (a_container_id: STRING)
+			-- ISO 6346 conforming container number (if possible).
+			-- AAA A 999999 9
+			-- Owner Code, Equipment Code, Serial Number, Check digit
+		note
+			design: "[
+				There exists the possibility that `a_container_id' will not conform
+				to ISO 6346. Therefore, we attempt to conform within limits, setting
+				the overall `container_id' to the incoming (passed argument) ID.
+				However, for non-ISO-conforming ID's, we work left-to-right, parsing
+				the incoming ID as far as we can along the vector of owner, equipment,
+				and serial number fields.
+				]"
+		do
+			set_container_id (a_container_id)
+			if not a_container_id.is_empty then
+				if a_container_id.count >= 3 then
+					owner_code := a_container_id.substring (1, 3)
+				else
+					owner_code := a_container_id.substring (1, a_container_id.count)
+				end
+				if a_container_id.count >= 4 then
+					equipment_category_id := a_container_id [4]
+				else
+					do_nothing
+				end
+				if a_container_id.count >= 10 then
+					serial_number := a_container_id.substring (5, 10)
+				elseif a_container_id.count >= 5 then
+					serial_number := a_container_id.substring (5, a_container_id.count)
+				else
+					do_nothing
+				end
+			end
+		end
+
 	make (a_owner_code: STRING; a_equipment_category_id: CHARACTER; a_serial_number: STRING)
-			--
+			-- Presumes an ISO 6346 conforming `a_owner_code', `a_equipment_category_id' and `a_serial_number'
+			-- The checksum value is computed and not passed
 		do
 			owner_code := a_owner_code
 			equipment_category_id := a_equipment_category_id
 			serial_number := a_serial_number
+			container_id.do_nothing
+		ensure
+			ISO: is_iso_6346_compliant
+			valid: is_valid_container_id (container_id)
 		end
 
 feature -- Identification System
+
+	container_id: STRING
+			-- `container_id' (settable or computed from `owner_code' etc.)
+		attribute
+			Result := owner_code.twin
+			Result.append_character (equipment_category_id)
+			Result.append_string_general (serial_number)
+			Result.append_character (check_digit)
+		end
 
 	owner_code: STRING
 		note
@@ -39,7 +90,7 @@ feature -- Identification System
 		note
 			EIS: "src=https://en.wikipedia.org/wiki/ISO_6346#Serial_Number"
 		attribute
-			Result := "000000"
+			create Result.make_empty
 		end
 
 	check_digit: CHARACTER
@@ -159,7 +210,34 @@ feature -- Queries
 	is_general_purpose: BOOLEAN
 	is_dry_freight: BOOLEAN do Result := is_general_purpose end
 
+	is_valid_container_id (a_id: STRING): BOOLEAN
+			--
+		do
+			Result := a_id.count = 11
+			Result := Result and then
+						(not (a_id.substring (1, 3)).is_number_sequence) and then
+						across a_id.substring (1, 3) as ic all alpha.has (ic.item) end
+			Result := Result and then
+						across a_id.substring (4, 4) as ic all category_ids.has (ic.item) end
+			Result := Result and then
+						a_id.substring (5, 11).is_number_sequence
+		end
+
+	is_iso_6346_compliant: BOOLEAN
+			-- Is the `container_id' ISO 6346 compliant?
+		do
+			Result := is_valid_container_id (container_id)
+		end
+
 feature -- Settings
+
+	set_container_id (a_id: like container_id)
+			-- `set_container_id' with `a_id' like `container_id'.
+		do
+			container_id := a_id
+		ensure
+			set: container_id.same_string (a_id)
+		end
 
 	set_is_metric (a_is_metric: like is_metric)
 			-- Sets `is_metric' with `a_is_metric'.
@@ -184,11 +262,19 @@ feature -- Settings
 		ensure
 			is_general_purpose_set: is_general_purpose = a_is_general_purpose
 		end
+feature {NONE} -- Implementation: Constants
+
+	alpha: STRING = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+	category_ids: STRING = "UJZ"
 
 invariant
-	owner_code_valid: (owner_code.count = 3) and then across owner_code as ic all ("ABCDEFGHIJKLMNOPQRSTUVWXYZ").has (ic.item) end
-	equipment_category_valid: across ("UJZ") as ic some equipment_category_id = ic.item end
-	serial_number_valid: serial_number.is_integer and then serial_number.to_integer >= 0 and serial_number.to_integer <= 999999
+	owner_code_valid: is_iso_6346_compliant implies
+						(owner_code.count = 3) and then across owner_code as ic all alpha.has (ic.item) end
+	equipment_category_valid: is_iso_6346_compliant implies
+						across category_ids as ic some equipment_category_id = ic.item end
+	serial_number_valid: is_iso_6346_compliant implies
+						serial_number.is_integer and then serial_number.to_integer >= 0 and serial_number.to_integer <= 999999
 
 ;note
 	types: "[
